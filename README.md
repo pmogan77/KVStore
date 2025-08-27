@@ -67,15 +67,164 @@ make shell
 
 ## Flask API Endpoints
 
-| Method | Endpoint         | Description                        | Payload Example                    |
-|--------|------------------|------------------------------------|-----------------------------------|
-| GET    | `/get/<key>`     | Get value for a key                 | N/A                               |
-| POST   | `/set`           | Set value for a key                 | `{"key": "foo", "value": "bar"}` |
-| POST   | `/delete/<key>`  | Delete a key                        | N/A                               |
-| POST   | `/begin`         | Start a new transaction             | N/A                               |
-| POST   | `/commit`        | Commit the current transaction      | N/A                               |
-| POST   | `/rollback`      | Rollback the current transaction    | N/A                               |
-| GET    | `/snapshot`      | Get resolved view of current state  | N/A                               |
+| Method | Endpoint         | Description                        | Payload Example                     |
+|--------|------------------|------------------------------------|-------------------------------------|
+| GET    | `/get/<key>`     | Get value for a key                | N/A                                  |
+| POST   | `/set`           | Set value for a key                | `{ "key": "foo", "value": "bar" }` |
+| POST   | `/delete/<key>`  | Delete a key                       | N/A                                  |
+| POST   | `/begin`         | Start a new transaction            | N/A                                  |
+| POST   | `/commit`        | Commit the current transaction     | N/A                                  |
+| POST   | `/rollback`      | Rollback the current transaction   | N/A                                  |
+| GET    | `/snapshot`      | Get resolved view of current state | N/A                                  |
+
+---
+
+## Example Requests
+
+> All examples assume the API is running locally at `http://localhost:5000`.
+
+### 1) Quick sanity check
+
+```bash
+curl -s http://localhost:5000/snapshot | jq
+```
+
+**Sample response**
+```json
+{}
+```
+
+### 2) Basic CRUD
+
+**Set a key**
+```bash
+curl -s -X POST http://localhost:5000/set   -H 'Content-Type: application/json'   -d '{"key":"foo","value":"bar"}' | jq
+```
+
+**Get a key**
+```bash
+curl -s http://localhost:5000/get/foo | jq
+```
+
+**Sample response**
+```json
+{"key": "foo", "value": "bar"}
+```
+
+**Delete a key**
+```bash
+curl -s -X POST http://localhost:5000/delete/foo | jq
+```
+
+**Get after delete (404)**
+```bash
+curl -i http://localhost:5000/get/foo
+```
+
+### 3) Transactions
+
+**Start a transaction**
+```bash
+curl -s -X POST http://localhost:5000/begin | jq
+```
+
+**Set values inside the transaction**
+```bash
+curl -s -X POST http://localhost:5000/set   -H 'Content-Type: application/json'   -d '{"key":"a","value":"1"}' | jq
+
+curl -s -X POST http://localhost:5000/set   -H 'Content-Type: application/json'   -d '{"key":"b","value":"2"}' | jq
+```
+
+**See the transaction-local state**
+```bash
+curl -s http://localhost:5000/snapshot | jq
+```
+
+**Sample response**
+```json
+{"a": "1", "b": "2"}
+```
+
+**Commit**
+```bash
+curl -s -X POST http://localhost:5000/commit | jq
+```
+
+**Verify committed state**
+```bash
+curl -s http://localhost:5000/snapshot | jq
+```
+
+### 4) Rollback
+
+```bash
+curl -s -X POST http://localhost:5000/begin | jq
+curl -s -X POST http://localhost:5000/set   -H 'Content-Type: application/json'   -d '{"key":"temp","value":"42"}' | jq
+curl -s http://localhost:5000/snapshot | jq    # shows temp
+curl -s -X POST http://localhost:5000/rollback | jq
+curl -s http://localhost:5000/snapshot | jq    # temp is gone
+```
+
+### 5) Nested transactions
+
+```bash
+# Outer begin
+curl -s -X POST http://localhost:5000/begin | jq
+
+# Set x in outer txn
+curl -s -X POST http://localhost:5000/set   -H 'Content-Type: application/json'   -d '{"key":"x","value":"outer"}' | jq
+
+# Inner begin
+curl -s -X POST http://localhost:5000/begin | jq
+
+# Override x in inner txn
+curl -s -X POST http://localhost:5000/set   -H 'Content-Type: application/json'   -d '{"key":"x","value":"inner"}' | jq
+
+# Snapshot inside inner shows "inner"
+curl -s http://localhost:5000/snapshot | jq
+
+# Rollback inner; x should revert to "outer"
+curl -s -X POST http://localhost:5000/rollback | jq
+curl -s http://localhost:5000/snapshot | jq
+
+# Commit outer
+curl -s -X POST http://localhost:5000/commit | jq
+```
+
+### 6) Python requests examples
+
+```python
+import requests
+base = "http://localhost:5000"
+
+# Set
+requests.post(f"{base}/set", json={"key": "lang", "value": "python"}).json()
+
+# Get
+requests.get(f"{base}/get/lang").json()
+
+# Transaction
+requests.post(f"{base}/begin")
+requests.post(f"{base}/set", json={"key": "n", "value": 1})
+requests.get(f"{base}/snapshot").json()  # {"lang":"python", "n":1}
+requests.post(f"{base}/commit")
+```
+
+### 7) Common error cases
+
+**Getting a missing key**
+```bash
+curl -i http://localhost:5000/get/does-not-exist
+```
+
+Expected: `404 Not Found`.
+
+**Commit without a transaction**
+```bash
+curl -i -X POST http://localhost:5000/commit
+```
+
+Expected: `400 Bad Request` with a helpful error message.
 
 ---
 
